@@ -3,6 +3,7 @@ from IPython.display import display, HTML, Javascript
 import random
 import json
 import plotly.graph_objs as go
+import pandas as pd
 
 COLOR_SCHEME = {
     'background': '#2b2b2b',
@@ -11,6 +12,11 @@ COLOR_SCHEME = {
     'secondary': '#E74C3C',
     'accent': '#2ECC71',
     'hover': '#9b9b9b',
+    'common': '#B0B0B0',
+    'uncommon': '#55AA55',
+    'rare': '#5555FF',
+    'epic': '#AA55AA',
+    'legendary': '#FFAA00',
 }
 
 styles = f"""
@@ -101,24 +107,85 @@ styles = f"""
     .radar-chart {{
         margin-top: 20px;
     }}
+    .item-card {{
+        width: 200px;
+        background-color: {COLOR_SCHEME['background']};
+        border: 2px solid {COLOR_SCHEME['accent']};
+        border-radius: 8px;
+        padding: 10px;
+        margin: 10px;
+        color: {COLOR_SCHEME['text']};
+    }}
+    .item-name {{
+        font-weight: bold;
+        font-size: 18px;
+        margin-bottom: 5px;
+    }}
+    .item-type {{
+        font-style: italic;
+        margin-bottom: 5px;
+    }}
+    .item-stats {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+    }}
+    .common {{ color: {COLOR_SCHEME['common']}; }}
+    .uncommon {{ color: {COLOR_SCHEME['uncommon']}; }}
+    .rare {{ color: {COLOR_SCHEME['rare']}; }}
+    .epic {{ color: {COLOR_SCHEME['epic']}; }}
+    .legendary {{ color: {COLOR_SCHEME['legendary']}; }}
 </style>
 """
 
 class Item:
-    def __init__(self, name, description):
+    def __init__(self, name, item_type, rarity, power, required_stats):
         self.name = name
-        self.description = description
+        self.item_type = item_type
+        self.rarity = rarity
+        self.power = power
+        self.required_stats = required_stats
+
+    def to_dict(self):
+        return {
+            'name': self.name,
+            'item_type': self.item_type,  # Changed 'type' to 'item_type'
+            'rarity': self.rarity,
+            'power': self.power,
+            'required_stats': self.required_stats
+        }
+
+    def create_item_card(self):
+        return f"""
+        <div class="item-card">
+            <div class="item-name {self.rarity.lower()}">{self.name}</div>
+            <div class="item-type">{self.item_type}</div>
+            <div class="item-stats">
+                <div>Rarity:</div><div class="{self.rarity.lower()}">{self.rarity}</div>
+                <div>Power:</div><div>{self.power}</div>
+                <div>Required Stats:</div><div>{', '.join(f'{k}: {v}' for k, v in self.required_stats.items())}</div>
+            </div>
+        </div>
+        """
 
 class RPGInventory:
     def __init__(self):
-        self.items = [
-            Item("Sword", "A sharp blade"),
-            Item("Shield", "Sturdy protection"),
-            Item("Potion", "Heals 50 HP"),
-            Item("Gem", "Valuable treasure"),
-            Item("Coin", "Currency")
-        ]
+        self.items = []
         self.max_items = 10
+        self.item_database = self.create_item_database()
+
+    def create_item_database(self):
+        items = [
+            Item("Steel Sword", "Weapon", "Common", 10, {"strength": 5}),
+            Item("Magic Staff", "Weapon", "Uncommon", 15, {"intelligence": 8}),
+            Item("Leather Armor", "Armor", "Common", 8, {"dexterity": 3}),
+            Item("Healing Potion", "Consumable", "Common", 5, {}),
+            Item("Dragon Scale", "Material", "Rare", 50, {}),
+            Item("Enchanted Bow", "Weapon", "Rare", 25, {"dexterity": 10}),
+            Item("Mithril Chainmail", "Armor", "Epic", 40, {"strength": 15, "dexterity": 10}),
+            Item("Philosopher's Stone", "Artifact", "Legendary", 100, {"intelligence": 20}),
+        ]
+        return pd.DataFrame([item.to_dict() for item in items])
 
     def add_item(self, item):
         if len(self.items) < self.max_items:
@@ -134,9 +201,9 @@ class RPGInventory:
 
     def create_item_html(self, item, index):
         return f"""
-        <div class="item" draggable="true" ondragstart="drag(event)" id="item-{index}">
+        <div class="item {item.rarity.lower()}" draggable="true" ondragstart="drag(event)" id="item-{index}">
             {item.name}
-            <span class="tooltip">{item.description}</span>
+            <span class="tooltip">{item.item_type}</span>
         </div>
         """
 
@@ -167,8 +234,16 @@ class RPGInventory:
         display(widgets.HBox([add_button, remove_button]))
 
     def add_random_item(self, _):
-        new_item = Item(f"Item {len(self.items) + 1}", f"Description for Item {len(self.items) + 1}")
-        if self.add_item(new_item):
+        if len(self.items) < self.max_items:
+            random_item = self.item_database.sample(1).iloc[0]
+            new_item = Item(
+                random_item['name'],
+                random_item['item_type'],  # Changed 'type' to 'item_type'
+                random_item['rarity'],
+                random_item['power'],
+                random_item['required_stats']
+            )
+            self.items.append(new_item)
             self.update_inventory()
 
     def remove_last_item(self, _):
@@ -176,7 +251,7 @@ class RPGInventory:
             self.update_inventory()
 
     def update_inventory(self):
-        inventory_data = json.dumps([{'name': item.name, 'description': item.description} for item in self.items])
+        inventory_data = json.dumps([item.to_dict() for item in self.items])
         js_code = f"""
         console.log("Updating inventory...");
         console.log("Inventory data:", {inventory_data});
@@ -184,7 +259,10 @@ class RPGInventory:
         """
         display(Javascript(js_code))
 
-# New Character System
+    def display_item_database(self):
+        item_cards = ''.join([Item(**item).create_item_card() for _, item in self.item_database.iterrows()])
+        display(HTML(f"{styles}<div style='display: flex; flex-wrap: wrap;'>{item_cards}</div>"))
+
 class Character:
     def __init__(self, name, char_class, level=1):
         self.name = name
@@ -296,13 +374,13 @@ function updateInventory(inventoryData) {
     grid.innerHTML = '';
     inventoryData.forEach((item, index) => {
         var itemDiv = document.createElement('div');
-        itemDiv.className = 'item';
+        itemDiv.className = `item ${item.rarity.toLowerCase()}`;
         itemDiv.draggable = true;
         itemDiv.ondragstart = drag;
         itemDiv.ondrop = drop;
         itemDiv.ondragover = allowDrop;
         itemDiv.id = 'item-' + index;
-        itemDiv.innerHTML = item.name + '<span class="tooltip">' + item.description + '</span>';
+        itemDiv.innerHTML = item.name + `<span class="tooltip">${item.item_type}</span>`;
         grid.appendChild(itemDiv);
     });
     for (let i = inventoryData.length; i < 10; i++) {
@@ -336,3 +414,6 @@ print("Items in inventory:", [item.name for item in game.items])
 creator = CharacterCreator()
 creator.display()
 
+# Display the item database
+print("\nItem Database:")
+game.display_item_database()
