@@ -7,6 +7,9 @@ import pandas as pd
 import os
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import NearestNeighbors
+import numpy as np
 
 
 COLOR_SCHEME = {
@@ -202,12 +205,104 @@ class Character:
         character.inventory = [Item(**item_data) for item_data in data['inventory']]
         return character
 
+class KNNRecommender:
+    def __init__(self, game):
+        self.game = game
+        self.scaler = StandardScaler()
+        self.knn_model = None
+
+    def prepare_data(self):
+        data = [char.to_dict() for char in self.game.characters]
+        df = pd.DataFrame(data)
+        features = ['strength', 'intelligence', 'dexterity', 'level']
+        X = df[features]
+        return X, df
+
+    def fit(self, n_neighbors=5):
+        X, _ = self.prepare_data()
+        X_scaled = self.scaler.fit_transform(X)
+        self.knn_model = NearestNeighbors(n_neighbors=n_neighbors, metric='euclidean')
+        self.knn_model.fit(X_scaled)
+
+    def get_recommendations(self, character, n_recommendations=5):
+        if self.knn_model is None:
+            self.fit()
+
+        character_features = [[character.strength, character.intelligence, character.dexterity, character.level]]
+        character_scaled = self.scaler.transform(character_features)
+        
+        distances, indices = self.knn_model.kneighbors(character_scaled)
+        
+        X, df = self.prepare_data()
+        recommendations = df.iloc[indices[0][1:]]  # Exclude the first one as it's the character itself
+        
+        return recommendations
+
+    def visualize_knn(self, character):
+        X, df = self.prepare_data()
+        X_scaled = self.scaler.transform(X)
+        
+        character_features = [[character.strength, character.intelligence, character.dexterity, character.level]]
+        character_scaled = self.scaler.transform(character_features)
+        
+        distances, indices = self.knn_model.kneighbors(character_scaled)
+        
+        fig = go.Figure()
+
+        # Plot all characters
+        fig.add_trace(go.Scatter3d(
+            x=X_scaled[:, 0],
+            y=X_scaled[:, 1],
+            z=X_scaled[:, 2],
+            mode='markers',
+            marker=dict(size=4, color='blue', opacity=0.5),
+            text=df['name'],
+            name='All Characters'
+        ))
+
+        # Plot the input character
+        fig.add_trace(go.Scatter3d(
+            x=[character_scaled[0][0]],
+            y=[character_scaled[0][1]],
+            z=[character_scaled[0][2]],
+            mode='markers',
+            marker=dict(size=8, color='red'),
+            text=[character.name],
+            name='Input Character'
+        ))
+
+        # Plot the nearest neighbors
+        fig.add_trace(go.Scatter3d(
+            x=X_scaled[indices[0][1:], 0],
+            y=X_scaled[indices[0][1:], 1],
+            z=X_scaled[indices[0][1:], 2],
+            mode='markers',
+            marker=dict(size=6, color='green'),
+            text=df.iloc[indices[0][1:]]['name'],
+            name='Nearest Neighbors'
+        ))
+
+        fig.update_layout(
+            scene=dict(
+                xaxis_title='Strength (Scaled)',
+                yaxis_title='Intelligence (Scaled)',
+                zaxis_title='Dexterity (Scaled)'
+            ),
+            width=700,
+            margin=dict(r=20, b=10, l=10, t=10),
+            title='KNN Visualization'
+        )
+
+        fig.show()
+
+
 class RPGInventory:
     def __init__(self):
         self.items = []
         self.max_items = 10
         self.item_database = self.create_item_database()
         self.characters = []
+        self.recommender = KNNRecommender(self)
 
     def create_item_database(self):
         items = [
@@ -377,6 +472,14 @@ class RPGInventory:
         plt.ylabel('Count of Players')
         plt.show()
 
+    def get_recommendations_for_character(self, character):
+        recommendations = self.recommender.get_recommendations(character)
+        print(f"Recommendations for {character.name}:")
+        for _, rec in recommendations.iterrows():
+            print(f"- {rec['name']} (Class: {rec['class']}, Level: {rec['level']})")
+        
+        self.recommender.visualize_knn(character)
+
 class CharacterCreator:
     def __init__(self, game):
         self.game = game
@@ -438,6 +541,48 @@ class CharacterCreator:
         display(HTML(character_html))
         fig.show()
 
+
+
+# Create an interactive character creator with recommendations
+class InteractiveCharacterCreator(CharacterCreator):
+    def __init__(self, game):
+        super().__init__(game)
+        self.level_input = widgets.IntSlider(min=1, max=50, step=1, value=1, description='Level:')
+        self.strength_input = widgets.IntSlider(min=1, max=20, step=1, value=10, description='Strength:')
+        self.intelligence_input = widgets.IntSlider(min=1, max=20, step=1, value=10, description='Intelligence:')
+        self.dexterity_input = widgets.IntSlider(min=1, max=20, step=1, value=10, description='Dexterity:')
+        self.recommend_button = widgets.Button(description='Get Recommendations')
+        self.recommend_button.on_click(self.get_recommendations)
+
+    def display(self):
+        display(self.name_input, self.class_dropdown, self.level_input, self.strength_input, 
+                self.intelligence_input, self.dexterity_input, self.create_button, 
+                self.recommend_button, self.output)
+
+    def create_character(self, _):
+        with self.output:
+            self.output.clear_output()
+            name = self.name_input.value
+            char_class = self.class_dropdown.value
+            level = self.level_input.value
+            character = Character(name, char_class, level)
+            character.strength = self.strength_input.value
+            character.intelligence = self.intelligence_input.value
+            character.dexterity = self.dexterity_input.value
+            self.game.characters.append(character)
+            print(f"Character created: {character.name} the {character.char_class}")
+            self.display_character_stats(character)
+
+    def get_recommendations(self, _):
+        with self.output:
+            self.output.clear_output()
+            character = Character(self.name_input.value, self.class_dropdown.value, self.level_input.value)
+            character.strength = self.strength_input.value
+            character.intelligence = self.intelligence_input.value
+            character.dexterity = self.dexterity_input.value  # Fixed this line
+            self.game.get_recommendations_for_character(character)
+
+
 # Create the game instance
 game = RPGInventory()
 
@@ -475,3 +620,10 @@ game.save_game_state()
 
 # Load game state (for demonstration)
 game.load_game_state()
+
+# Fit the KNN model after generating simulated players
+game.recommender.fit()
+
+# Create and display the interactive character creator
+interactive_creator = InteractiveCharacterCreator(game)
+interactive_creator.display()
