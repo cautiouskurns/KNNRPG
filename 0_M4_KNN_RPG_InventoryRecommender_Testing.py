@@ -227,7 +227,8 @@ class KNNRecommender:
         if self.knn_model is None:
             self.fit()
 
-        character_features = [[character.strength, character.intelligence, character.dexterity, character.level]]
+        character_features = pd.DataFrame([[character.strength, character.intelligence, character.dexterity, character.level]],
+                                        columns=['strength', 'intelligence', 'dexterity', 'level'])
         character_scaled = self.scaler.transform(character_features)
         
         distances, indices = self.knn_model.kneighbors(character_scaled)
@@ -235,7 +236,7 @@ class KNNRecommender:
         X, df = self.prepare_data()
         recommendations = df.iloc[indices[0][1:]]  # Exclude the first one as it's the character itself
         
-        return recommendations
+        return recommendations, X, df, character_scaled, indices
 
     def calculate_item_similarity(self, character, item):
         # Calculate similarity based on how well item required stats match character stats
@@ -257,25 +258,21 @@ class KNNRecommender:
         recommendations.sort(key=lambda x: x[1], reverse=True)
         return recommendations[:5]
 
-    def visualize_knn(self, character):
-        X, df = self.prepare_data()
-        X_scaled = self.scaler.transform(X)
-        
-        character_features = [[character.strength, character.intelligence, character.dexterity, character.level]]
-        character_scaled = self.scaler.transform(character_features)
-        
-        distances, indices = self.knn_model.kneighbors(character_scaled)
-        
+    def visualize_knn_with_labels(self, character, X_scaled, df, character_scaled, indices):
         fig = go.Figure()
 
-        # Plot all characters
+        # Convert X_scaled to a numpy array if it's not already
+        if isinstance(X_scaled, pd.DataFrame):
+            X_scaled = X_scaled.to_numpy()
+
+        # Plot all characters with hover text showing their name and class
         fig.add_trace(go.Scatter3d(
             x=X_scaled[:, 0],
             y=X_scaled[:, 1],
             z=X_scaled[:, 2],
             mode='markers',
             marker=dict(size=4, color='blue', opacity=0.5),
-            text=df['name'],
+            text=df.apply(lambda row: f"Name: {row['name']}<br>Class: {row['class']}<br>Level: {row['level']}", axis=1),
             name='All Characters'
         ))
 
@@ -286,7 +283,7 @@ class KNNRecommender:
             z=[character_scaled[0][2]],
             mode='markers',
             marker=dict(size=8, color='red'),
-            text=[character.name],
+            text=[f"Name: {character.name}<br>Class: {character.char_class}<br>Level: {character.level}"],
             name='Input Character'
         ))
 
@@ -297,27 +294,23 @@ class KNNRecommender:
             z=X_scaled[indices[0][1:], 2],
             mode='markers',
             marker=dict(size=6, color='green'),
-            text=df.iloc[indices[0][1:]]['name'],
+            text=df.iloc[indices[0][1:]].apply(lambda row: f"Name: {row['name']}<br>Class: {row['class']}<br>Level: {row['level']}", axis=1),
             name='Nearest Neighbors'
         ))
 
+        # Update layout with better labels and a title
         fig.update_layout(
             scene=dict(
                 xaxis_title='Strength (Scaled)',
                 yaxis_title='Intelligence (Scaled)',
                 zaxis_title='Dexterity (Scaled)'
             ),
-            width=700,
-            margin=dict(r=20, b=10, l=10, t=10),
-            title='KNN Visualization'
+            margin=dict(r=20, b=10, l=10, t=40),
+            title='Character Similarity Based on Attributes',
+            hovermode='closest'
         )
 
         fig.show()
-
-        # Visualize recommended items
-        item_recommendations = self.recommend_items_for_character(character)
-        for item, score in item_recommendations:
-            print(f"Recommended Item: {item.name} (Score: {score})")
 
 class RPGInventory:
     def __init__(self):
@@ -489,12 +482,13 @@ class RPGInventory:
         plt.show()
 
     def get_recommendations_for_character(self, character):
-        recommendations = self.recommender.get_recommendations(character)
+        recommendations, X_scaled, df, character_scaled, indices = self.recommender.get_recommendations(character)
         print(f"Recommendations for {character.name}:")
         for _, rec in recommendations.iterrows():
             print(f"- {rec['name']} (Class: {rec['class']}, Level: {rec['level']})")
         
-        self.recommender.visualize_knn(character)
+        # Call the visualization function with the required arguments
+        self.recommender.visualize_knn_with_labels(character, X_scaled, df, character_scaled, indices)
 
 class CharacterCreator:
     def __init__(self, game):
@@ -544,7 +538,7 @@ class CharacterCreator:
             <div class="character-image">?</div>
             <div class="character-details">
                 <div class="stat-label">Name:</div> <div>{character.name}</div>
-                <div class="stat-label">Class:</div> <div>{character.char_class()}</div>
+                <div class="stat-label">Class:</div> <div>{character.char_class}</div>
                 <div class="stat-label">Level:</div> <div>{character.level}</div>
                 <div class="stat-label">Strength:</div> <div>{character.strength}</div>
                 <div class="stat-label">Intelligence:</div> <div>{character.intelligence}</div>
@@ -556,6 +550,7 @@ class CharacterCreator:
 
         display(HTML(character_html))
         fig.show()
+
 
 
 class InteractiveCharacterCreator(CharacterCreator):
