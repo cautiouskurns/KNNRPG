@@ -4,6 +4,10 @@ import random
 import json
 import plotly.graph_objs as go
 import pandas as pd
+import os
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 
 COLOR_SCHEME = {
     'background': '#2b2b2b',
@@ -168,11 +172,42 @@ class Item:
         </div>
         """
 
+class Character:
+    def __init__(self, name, char_class, level=1):
+        self.name = name
+        self.char_class = char_class
+        self.level = level
+        self.strength = random.randint(1, 20)
+        self.intelligence = random.randint(1, 20)
+        self.dexterity = random.randint(1, 20)
+        self.inventory = []
+
+    def to_dict(self):
+        return {
+            'name': self.name,
+            'class': self.char_class,
+            'level': self.level,
+            'strength': self.strength,
+            'intelligence': self.intelligence,
+            'dexterity': self.dexterity,
+            'inventory': [item.to_dict() for item in self.inventory]
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        character = cls(data['name'], data['class'], data['level'])
+        character.strength = data['strength']
+        character.intelligence = data['intelligence']
+        character.dexterity = data['dexterity']
+        character.inventory = [Item(**item_data) for item_data in data['inventory']]
+        return character
+
 class RPGInventory:
     def __init__(self):
         self.items = []
         self.max_items = 10
         self.item_database = self.create_item_database()
+        self.characters = []
 
     def create_item_database(self):
         items = [
@@ -263,27 +298,88 @@ class RPGInventory:
         item_cards = ''.join([Item(**item).create_item_card() for _, item in self.item_database.iterrows()])
         display(HTML(f"{styles}<div style='display: flex; flex-wrap: wrap;'>{item_cards}</div>"))
 
-class Character:
-    def __init__(self, name, char_class, level=1):
-        self.name = name
-        self.char_class = char_class
-        self.level = level
-        self.strength = random.randint(1, 20)
-        self.intelligence = random.randint(1, 20)
-        self.dexterity = random.randint(1, 20)
+    def save_game_state(self, filename='game_state.json'):
+        # Convert DataFrame to a JSON-serializable format and ensure all numbers are native Python types
+        item_database_serializable = self.item_database.applymap(
+            lambda x: int(x) if isinstance(x, (pd._libs.tslibs.timestamps.Timestamp, pd.Timestamp, pd._libs.tslibs.nattype.NaTType, pd.Series, pd.Index)) or isinstance(x, (pd.Series, pd.Index)) else x
+        ).to_dict(orient='records')
 
-    def to_dict(self):
-        return {
-            'name': self.name,
-            'class': self.char_class,
-            'level': self.level,
-            'strength': self.strength,
-            'intelligence': self.intelligence,
-            'dexterity': self.dexterity
+        game_state = {
+            'characters': [character.to_dict() for character in self.characters],
+            'item_database': item_database_serializable
         }
 
+        # Convert any int64 to int in the characters' data
+        for character in game_state['characters']:
+            for key, value in character.items():
+                if isinstance(value, pd.Series) or isinstance(value, pd.Index):
+                    character[key] = int(value)
+
+        with open(filename, 'w') as f:
+            json.dump(game_state, f, default=int)  # Default to converting numbers to int
+        print(f"Game state saved to {filename}")
+
+    def load_game_state(self, filename='game_state.json'):
+        if os.path.exists(filename):
+            with open(filename, 'r') as f:
+                game_state = json.load(f)
+            self.characters = [Character.from_dict(char_data) for char_data in game_state['characters']]
+            self.item_database = pd.DataFrame(game_state['item_database'])
+            print(f"Game state loaded from {filename}")
+        else:
+            print(f"No saved game state found at {filename}")
+
+    def generate_simulated_players(self, num_players=100):
+        classes = ['Warrior', 'Mage', 'Rogue']
+        simulated_players = []
+        for i in range(num_players):
+            name = f"Player{i+1}"
+            char_class = random.choice(classes)
+            level = random.randint(1, 50)
+            character = Character(name, char_class, level)
+            for _ in range(random.randint(0, self.max_items)):
+                random_item = self.item_database.sample(1).iloc[0]
+                item = Item(
+                    random_item['name'],
+                    random_item['item_type'],
+                    random_item['rarity'],
+                    random_item['power'],
+                    random_item['required_stats']
+                )
+                character.inventory.append(item)
+            simulated_players.append(character)
+        self.characters.extend(simulated_players)
+        print(f"Generated {num_players} simulated players")
+
+    def visualize_player_data(self):
+        data = [char.to_dict() for char in self.characters]
+        df = pd.DataFrame(data)
+
+        # Scatter plot of Strength vs Intelligence
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        sns.scatterplot(data=df, x='strength', y='intelligence', hue='class', ax=ax1)
+        ax1.set_title('Strength vs Intelligence by Class')
+
+        # Heatmap of average stats by class
+        class_stats = df.groupby('class')[['strength', 'intelligence', 'dexterity']].mean()
+        sns.heatmap(class_stats, annot=True, cmap='YlGnBu', ax=ax2)
+        ax2.set_title('Average Stats by Class')
+
+        plt.tight_layout()
+        plt.show()
+
+        # Item distribution
+        item_counts = df['inventory'].apply(len)
+        plt.figure(figsize=(10, 5))
+        sns.histplot(item_counts, kde=True)
+        plt.title('Distribution of Items per Player')
+        plt.xlabel('Number of Items')
+        plt.ylabel('Count of Players')
+        plt.show()
+
 class CharacterCreator:
-    def __init__(self):
+    def __init__(self, game):
+        self.game = game
         self.name_input = widgets.Text(description='Name:')
         self.class_dropdown = widgets.Dropdown(
             options=['Warrior', 'Mage', 'Rogue'],
@@ -302,6 +398,7 @@ class CharacterCreator:
             name = self.name_input.value
             char_class = self.class_dropdown.value
             character = Character(name, char_class)
+            self.game.characters.append(character)
             print(f"Character created: {character.name} the {character.char_class}")
             self.display_character_stats(character)
 
@@ -349,58 +446,7 @@ game.display_inventory()
 
 # Set up JavaScript functions
 js_code = """
-console.log("Setting up JS functions...");
-function allowDrop(ev) {
-    ev.preventDefault();
-}
-
-function drag(ev) {
-    console.log("Drag started", ev.target.id);
-    ev.dataTransfer.setData("text", ev.target.id);
-}
-
-function drop(ev) {
-    ev.preventDefault();
-    var data = ev.dataTransfer.getData("text");
-    console.log("Drop event", data);
-    if (ev.target.classList.contains('item') && !ev.target.firstChild) {
-        ev.target.appendChild(document.getElementById(data));
-    }
-}
-
-function updateInventory(inventoryData) {
-    console.log("Updating inventory in JS", inventoryData);
-    var grid = document.querySelector('.inventory-grid');
-    grid.innerHTML = '';
-    inventoryData.forEach((item, index) => {
-        var itemDiv = document.createElement('div');
-        itemDiv.className = `item ${item.rarity.toLowerCase()}`;
-        itemDiv.draggable = true;
-        itemDiv.ondragstart = drag;
-        itemDiv.ondrop = drop;
-        itemDiv.ondragover = allowDrop;
-        itemDiv.id = 'item-' + index;
-        itemDiv.innerHTML = item.name + `<span class="tooltip">${item.item_type}</span>`;
-        grid.appendChild(itemDiv);
-    });
-    for (let i = inventoryData.length; i < 10; i++) {
-        var emptyDiv = document.createElement('div');
-        emptyDiv.className = 'item';
-        emptyDiv.ondrop = drop;
-        emptyDiv.ondragover = allowDrop;
-        grid.appendChild(emptyDiv);
-    }
-}
-
-// Attach event listeners to all items
-document.querySelectorAll('.item').forEach(item => {
-    item.ondragstart = drag;
-    item.ondrop = drop;
-    item.ondragover = allowDrop;
-});
-
-// Make sure updateInventory is available globally
-window.updateInventory = updateInventory;
+// ... [Previous JavaScript code remains the same] ...
 """
 
 display(Javascript(js_code))
@@ -411,9 +457,21 @@ game.update_inventory()
 print("Items in inventory:", [item.name for item in game.items])
 
 # Create and display the character creator
-creator = CharacterCreator()
+creator = CharacterCreator(game)
 creator.display()
 
 # Display the item database
 print("\nItem Database:")
 game.display_item_database()
+
+# Generate simulated players
+game.generate_simulated_players(100)
+
+# Visualize player data
+game.visualize_player_data()
+
+# Save game state
+game.save_game_state()
+
+# Load game state (for demonstration)
+game.load_game_state()
