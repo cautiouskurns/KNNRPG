@@ -2,6 +2,7 @@ import ipywidgets as widgets
 from IPython.display import display, HTML, Javascript
 import random
 import json
+import plotly.graph_objs as go
 
 COLOR_SCHEME = {
     'background': '#2b2b2b',
@@ -66,6 +67,39 @@ styles = f"""
         margin-top: 20px;
         display: flex;
         justify-content: space-around;
+    }}
+    .character-stats {{
+        display: flex;
+        align-items: flex-start;
+        margin-top: 20px;
+        background-color: {COLOR_SCHEME['background']};
+        padding: 20px;
+        border-radius: 8px;
+        color: {COLOR_SCHEME['text']};
+    }}
+    .character-image {{
+        width: 100px;
+        height: 100px;
+        background-color: {COLOR_SCHEME['primary']};
+        border-radius: 50%;
+        margin-right: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 24px;
+        font-weight: bold;
+    }}
+    .character-details {{
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }}
+    .stat-label {{
+        font-weight: bold;
+    }}
+    .radar-chart {{
+        margin-top: 20px;
     }}
 </style>
 """
@@ -150,6 +184,85 @@ class RPGInventory:
         """
         display(Javascript(js_code))
 
+# New Character System
+class Character:
+    def __init__(self, name, char_class, level=1):
+        self.name = name
+        self.char_class = char_class
+        self.level = level
+        self.strength = random.randint(1, 20)
+        self.intelligence = random.randint(1, 20)
+        self.dexterity = random.randint(1, 20)
+
+    def to_dict(self):
+        return {
+            'name': self.name,
+            'class': self.char_class,
+            'level': self.level,
+            'strength': self.strength,
+            'intelligence': self.intelligence,
+            'dexterity': self.dexterity
+        }
+
+class CharacterCreator:
+    def __init__(self):
+        self.name_input = widgets.Text(description='Name:')
+        self.class_dropdown = widgets.Dropdown(
+            options=['Warrior', 'Mage', 'Rogue'],
+            description='Class:'
+        )
+        self.create_button = widgets.Button(description='Create Character')
+        self.create_button.on_click(self.create_character)
+        self.output = widgets.Output()
+
+    def display(self):
+        display(self.name_input, self.class_dropdown, self.create_button, self.output)
+
+    def create_character(self, _):
+        with self.output:
+            self.output.clear_output()
+            name = self.name_input.value
+            char_class = self.class_dropdown.value
+            character = Character(name, char_class)
+            print(f"Character created: {character.name} the {character.char_class}")
+            self.display_character_stats(character)
+
+    def display_character_stats(self, character):
+        stats = ['Strength', 'Intelligence', 'Dexterity']
+        values = [character.strength, character.intelligence, character.dexterity]
+
+        fig = go.Figure(data=go.Scatterpolar(
+            r=values + values[:1],
+            theta=stats + stats[:1],
+            fill='toself'
+        ))
+
+        fig.update_layout(
+            polar=dict(
+                radialaxis=dict(visible=True, range=[0, 20])
+            ),
+            showlegend=False
+        )
+
+        character_html = f"""
+        {styles}
+        <div class="character-stats">
+            <div class="character-image">?</div>
+            <div class="character-details">
+                <div class="stat-label">Name:</div> <div>{character.name}</div>
+                <div class="stat-label">Class:</div> <div>{character.char_class}</div>
+                <div class="stat-label">Level:</div> <div>{character.level}</div>
+                <div class="stat-label">Strength:</div> <div>{character.strength}</div>
+                <div class="stat-label">Intelligence:</div> <div>{character.intelligence}</div>
+                <div class="stat-label">Dexterity:</div> <div>{character.dexterity}</div>
+            </div>
+        </div>
+        <div class="radar-chart" id="plotly-figure"></div>
+        """
+
+        display(HTML(character_html))
+        fig.show()
+
 # Create the game instance
 game = RPGInventory()
 
@@ -171,11 +284,9 @@ function drag(ev) {
 function drop(ev) {
     ev.preventDefault();
     var data = ev.dataTransfer.getData("text");
-    var draggedElement = document.getElementById(data);
+    console.log("Drop event", data);
     if (ev.target.classList.contains('item') && !ev.target.firstChild) {
-        ev.target.appendChild(draggedElement);
-    } else if (ev.target.classList.contains('inventory-grid')) {
-        ev.target.appendChild(draggedElement);
+        ev.target.appendChild(document.getElementById(data));
     }
 }
 
@@ -216,10 +327,12 @@ window.updateInventory = updateInventory;
 
 display(Javascript(js_code))
 
-display(Javascript(js_code))
-
-
 # Initial inventory update to ensure everything is set up
 game.update_inventory()
 
 print("Items in inventory:", [item.name for item in game.items])
+
+# Create and display the character creator
+creator = CharacterCreator()
+creator.display()
+
