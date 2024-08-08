@@ -11,7 +11,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
 import numpy as np
 
-
 COLOR_SCHEME = {
     'background': '#2b2b2b',
     'text': '#FFFFFF',
@@ -156,7 +155,7 @@ class Item:
     def to_dict(self):
         return {
             'name': self.name,
-            'item_type': self.item_type,  # Changed 'type' to 'item_type'
+            'item_type': self.item_type,
             'rarity': self.rarity,
             'power': self.power,
             'required_stats': self.required_stats
@@ -238,6 +237,26 @@ class KNNRecommender:
         
         return recommendations
 
+    def calculate_item_similarity(self, character, item):
+        # Calculate similarity based on how well item required stats match character stats
+        stat_diffs = {
+            'strength': abs(character.strength - item.required_stats.get('strength', 0)),
+            'intelligence': abs(character.intelligence - item.required_stats.get('intelligence', 0)),
+            'dexterity': abs(character.dexterity - item.required_stats.get('dexterity', 0))
+        }
+        similarity_score = 100 - sum(stat_diffs.values())  # Higher score = more similar
+        return max(0, similarity_score)  # Ensure it's not negative
+
+    def recommend_items_for_character(self, character):
+        recommendations = []
+        for _, item_data in self.game.item_database.iterrows():
+            item = Item(**item_data)
+            similarity_score = self.calculate_item_similarity(character, item)
+            recommendations.append((item, similarity_score))
+
+        recommendations.sort(key=lambda x: x[1], reverse=True)
+        return recommendations[:5]
+
     def visualize_knn(self, character):
         X, df = self.prepare_data()
         X_scaled = self.scaler.transform(X)
@@ -295,6 +314,10 @@ class KNNRecommender:
 
         fig.show()
 
+        # Visualize recommended items
+        item_recommendations = self.recommend_items_for_character(character)
+        for item, score in item_recommendations:
+            print(f"Recommended Item: {item.name} (Score: {score})")
 
 class RPGInventory:
     def __init__(self):
@@ -368,7 +391,7 @@ class RPGInventory:
             random_item = self.item_database.sample(1).iloc[0]
             new_item = Item(
                 random_item['name'],
-                random_item['item_type'],  # Changed 'type' to 'item_type'
+                random_item['item_type'],
                 random_item['rarity'],
                 random_item['power'],
                 random_item['required_stats']
@@ -394,9 +417,8 @@ class RPGInventory:
         display(HTML(f"{styles}<div style='display: flex; flex-wrap: wrap;'>{item_cards}</div>"))
 
     def save_game_state(self, filename='game_state.json'):
-        # Convert DataFrame to a JSON-serializable format and ensure all numbers are native Python types
         item_database_serializable = self.item_database.applymap(
-            lambda x: int(x) if isinstance(x, (pd._libs.tslibs.timestamps.Timestamp, pd.Timestamp, pd._libs.tslibs.nattype.NaTType, pd.Series, pd.Index)) or isinstance(x, (pd.Series, pd.Index)) else x
+            lambda x: int(x) if isinstance(x, (pd.Series, pd.Index)) else x
         ).to_dict(orient='records')
 
         game_state = {
@@ -404,14 +426,8 @@ class RPGInventory:
             'item_database': item_database_serializable
         }
 
-        # Convert any int64 to int in the characters' data
-        for character in game_state['characters']:
-            for key, value in character.items():
-                if isinstance(value, pd.Series) or isinstance(value, pd.Index):
-                    character[key] = int(value)
-
         with open(filename, 'w') as f:
-            json.dump(game_state, f, default=int)  # Default to converting numbers to int
+            json.dump(game_state, f, default=int)
         print(f"Game state saved to {filename}")
 
     def load_game_state(self, filename='game_state.json'):
@@ -528,7 +544,7 @@ class CharacterCreator:
             <div class="character-image">?</div>
             <div class="character-details">
                 <div class="stat-label">Name:</div> <div>{character.name}</div>
-                <div class="stat-label">Class:</div> <div>{character.char_class}</div>
+                <div class="stat-label">Class:</div> <div>{character.char_class()}</div>
                 <div class="stat-label">Level:</div> <div>{character.level}</div>
                 <div class="stat-label">Strength:</div> <div>{character.strength}</div>
                 <div class="stat-label">Intelligence:</div> <div>{character.intelligence}</div>
@@ -542,8 +558,6 @@ class CharacterCreator:
         fig.show()
 
 
-
-# Create an interactive character creator with recommendations
 class InteractiveCharacterCreator(CharacterCreator):
     def __init__(self, game):
         super().__init__(game)
@@ -579,9 +593,15 @@ class InteractiveCharacterCreator(CharacterCreator):
             character = Character(self.name_input.value, self.class_dropdown.value, self.level_input.value)
             character.strength = self.strength_input.value
             character.intelligence = self.intelligence_input.value
-            character.dexterity = self.dexterity_input.value  # Fixed this line
+            character.dexterity = self.dexterity_input.value
             self.game.get_recommendations_for_character(character)
 
+            item_recommendations = self.game.recommender.recommend_items_for_character(character)
+            print("Item Recommendations:")
+            for item, score in item_recommendations:
+                print(f"- {item.name} (Score: {score})")
+
+# Main Execution Code
 
 # Create the game instance
 game = RPGInventory()
@@ -591,19 +611,64 @@ game.display_inventory()
 
 # Set up JavaScript functions
 js_code = """
-// ... [Previous JavaScript code remains the same] ...
+console.log("Setting up JS functions...");
+function allowDrop(ev) {
+    ev.preventDefault();
+}
+
+function drag(ev) {
+    console.log("Drag started", ev.target.id);
+    ev.dataTransfer.setData("text", ev.target.id);
+}
+
+function drop(ev) {
+    ev.preventDefault();
+    var data = ev.dataTransfer.getData("text");
+    console.log("Drop event", data);
+    if (ev.target.classList.contains('item') && !ev.target.firstChild) {
+        ev.target.appendChild(document.getElementById(data));
+    }
+}
+
+function updateInventory(inventoryData) {
+    console.log("Updating inventory in JS", inventoryData);
+    var grid = document.querySelector('.inventory-grid');
+    grid.innerHTML = '';
+    inventoryData.forEach((item, index) => {
+        var itemDiv = document.createElement('div');
+        itemDiv.className = `item ${item.rarity.toLowerCase()}`;
+        itemDiv.draggable = true;
+        itemDiv.ondragstart = drag;
+        itemDiv.ondrop = drop;
+        itemDiv.ondragover = allowDrop;
+        itemDiv.id = 'item-' + index;
+        itemDiv.innerHTML = item.name + `<span class="tooltip">${item.item_type}</span>`;
+        grid.appendChild(itemDiv);
+    });
+    for (let i = inventoryData.length; i < 10; i++) {
+        var emptyDiv = document.createElement('div');
+        emptyDiv.className = 'item';
+        emptyDiv.ondrop = drop;
+        emptyDiv.ondragover = allowDrop;
+        grid.appendChild(emptyDiv);
+    }
+}
+
+// Attach event listeners to all items
+document.querySelectorAll('.item').forEach(item => {
+    item.ondragstart = drag;
+    item.ondrop = drop;
+    item.ondragover = allowDrop;
+});
+
+// Make sure updateInventory is available globally
+window.updateInventory = updateInventory;
 """
 
 display(Javascript(js_code))
 
 # Initial inventory update to ensure everything is set up
 game.update_inventory()
-
-print("Items in inventory:", [item.name for item in game.items])
-
-# Create and display the character creator
-creator = CharacterCreator(game)
-creator.display()
 
 # Display the item database
 print("\nItem Database:")
@@ -614,12 +679,6 @@ game.generate_simulated_players(100)
 
 # Visualize player data
 game.visualize_player_data()
-
-# Save game state
-game.save_game_state()
-
-# Load game state (for demonstration)
-game.load_game_state()
 
 # Fit the KNN model after generating simulated players
 game.recommender.fit()
